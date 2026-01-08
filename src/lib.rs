@@ -16,15 +16,20 @@ impl Ports {
         Ports::Inline { len: 0, buf: MaybeUninit::uninit() }
     }
 
-    pub fn push(&mut self, port: u16) {
+    pub fn insert(&mut self, port: u16) {
         match self {
             Ports::Inline { len, buf } => {
+                let slice = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u16>(), *len as usize) };
+                if slice.contains(&port) {
+                    return;
+                }
+
                 if (*len as usize) < 16 {
                     unsafe {
                         let ptr = buf.as_mut_ptr() as *mut u16;
                         ptr.add(*len as usize).write(port);
                     }
-                    
+
                     *len += 1;
                 } else {
                     unsafe {
@@ -35,15 +40,30 @@ impl Ports {
                         let mut n_v = SmallVec::<[u16; 16]>::from_buf_and_len_unchecked(old_buf, old_len);
 
                         n_v.push(port);
+                        n_v.sort_unstable();
 
                         *self = Ports::Heap(n_v);
                     }
                     
                 }
             },
-            Ports::Heap(small_vec) => small_vec.push(port),
+            Ports::Heap(small_vec) => {
+                match small_vec.binary_search(&port) {
+                    Ok(_) => return,
+                    Err(i) =>  small_vec.insert(i, port)
+                }
+            }
         }
     }
+
+    pub fn contains(&self, port: &u16) -> bool {
+        match self {
+            Ports::Inline { len, buf } => self.as_slice().iter().any(|k| k == port),
+            Ports::Heap(small_vec) => small_vec.binary_search(&port).is_ok(),
+        }
+    }
+
+ 
 
     pub fn as_slice(&self) -> &[u16] {
         match self {
@@ -54,8 +74,11 @@ impl Ports {
         }
     }
 
-
 }
+
+
+
+
 
 impl Drop for Ports {
     fn drop(&mut self) {
@@ -86,7 +109,7 @@ mod tests {
         }
 
         for i in 1..=16 {
-            ports.push(i);
+            ports.insert(i);
         }
 
         // check stack
@@ -103,7 +126,7 @@ mod tests {
 
         
          // spill to heap, note original 16 ports stay stack allocated when moved to heap enum varaint, only 16+ get heap allocated
-        ports.push(17);
+        ports.insert(17);
 
         // Check heap storage
         let slice = ports.as_slice();
@@ -121,11 +144,30 @@ mod tests {
         }
 
         // Push a few more ports
-        ports.push(18);
-        ports.push(19);
+        ports.insert(18);
+        ports.insert(19);
 
         let slice = ports.as_slice();
         assert_eq!(slice, &[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]);
+        assert!(slice.contains(&8));
+        assert!(!slice.contains(&30));
+
+
+        assert!(ports.contains(&8));
+        assert!(!ports.contains(&30));
+
+
+
+        ports.insert(7);
+        assert_eq!(ports.as_slice().len(), 19);
+
+        ports.insert(33);
+        assert_eq!(ports.as_slice().len(), 20);
+
+        let slice = ports.as_slice();
+        assert_eq!(slice, &[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,33]);
+
+
     }
 
     #[test]
