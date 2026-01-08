@@ -24,6 +24,7 @@ impl Ports {
                         let ptr = buf.as_mut_ptr() as *mut u16;
                         ptr.add(*len as usize).write(port);
                     }
+                    
                     *len += 1;
                 } else {
                     unsafe {
@@ -66,5 +67,70 @@ impl Drop for Ports {
                 }
             }
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use smallvec::smallvec;
+
+    #[test]
+    fn test_ports_push_and_as_slice() {
+        let mut ports = Ports::new();
+
+        match &ports {
+            Ports::Inline { len, .. } => assert_eq!(*len, 0),
+            Ports::Heap(_) => panic!("Expected Inline variant"),
+        }
+
+        for i in 1..=16 {
+            ports.push(i);
+        }
+
+        // check stack
+        let slice = ports.as_slice();
+        assert_eq!(slice.len(), 16);
+        for i in 0..16 {
+            assert_eq!(slice[i], (i + 1) as u16);
+        }
+
+        match &ports {
+            Ports::Inline { len, .. } => assert_eq!(*len, 16),
+            Ports::Heap(_) => panic!("Expected Inline variant"),
+        }
+
+        
+         // spill to heap, note original 16 ports stay stack allocated when moved to heap enum varaint, only 16+ get heap allocated
+        ports.push(17);
+
+        // Check heap storage
+        let slice = ports.as_slice();
+        assert_eq!(slice.len(), 17);
+        for i in 0..17 {
+            assert_eq!(slice[i], (i + 1) as u16);
+        }
+
+        match &ports {
+            Ports::Inline { .. } => panic!("Expected Heap variant"),
+            Ports::Heap(v) => {
+                assert_eq!(v.len(), 17);
+                assert_eq!(v.as_slice(), &[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]);
+            }
+        }
+
+        // Push a few more ports
+        ports.push(18);
+        ports.push(19);
+
+        let slice = ports.as_slice();
+        assert_eq!(slice, &[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]);
+    }
+
+    #[test]
+    fn test_empty_ports() {
+        let ports = Ports::new();
+        assert!(ports.as_slice().is_empty());
     }
 }
