@@ -9,7 +9,6 @@ enum Chimera<T: PartialEq + Ord> {
         buf: MaybeUninit<[T; 16]>
     },
     Heap(SmallVec<[T; 16]>)// can only store 32 values max
-
 }
 
 impl<T: PartialEq + Ord> Chimera<T> {
@@ -47,9 +46,7 @@ impl<T: PartialEq + Ord> Chimera<T> {
                     ptr.add(i).write(iter.next().unwrap());
                 }
 
-                for v in iter {
-                    sm.push(v);
-                }
+                for v in iter { sm.push(v); }
             }
 
             Chimera::Heap(sm)
@@ -153,6 +150,8 @@ mod tests {
             ports.insert(i);
         }
 
+        assert!(ports.contains(&1));
+
         // check stack
         let slice = ports.as_slice();
         assert_eq!(slice.len(), 16);
@@ -205,8 +204,11 @@ mod tests {
         ports.insert(33);
         assert_eq!(ports.as_slice().len(), 20);
 
+        ports.insert(0);
+        assert_eq!(ports.as_slice().len(), 21);
+
         let slice = ports.as_slice();
-        assert_eq!(slice, &[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,33]);
+        assert_eq!(slice, &[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,33]);
 
 
     }
@@ -273,6 +275,11 @@ mod tests {
                 assert_eq!(v.as_slice(), &[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]);
             }
         }
+
+
+        let fast_vec: Chimera<&str> = Chimera::from_vec(vec!["Gamma", "Delta", "Void"]);
+        assert!(fast_vec.contains(&"Gamma"));
+
 
 
     }
