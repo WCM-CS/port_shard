@@ -9,7 +9,7 @@ in
 pkgs.mkShell {
   buildInputs = [
     (pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
-      extensions = [ "rust-src" "rust-analyzer-preview" ];
+      extensions = [ "rust-src" "rust-analyzer-preview" "miri" ];
     }))
     pkgs.llvmPackages.clang     
     pkgs.llvmPackages.libcxx 

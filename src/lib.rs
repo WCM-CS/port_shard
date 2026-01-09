@@ -2,31 +2,73 @@
 use std::mem::MaybeUninit;
 use smallvec::SmallVec;
 
-enum Ports {
+#[derive(Debug)]
+enum Chimera<T: PartialEq + Ord> {
     Inline {
         len: u8,
-        buf: MaybeUninit<[u16; 16]>
+        buf: MaybeUninit<[T; 16]>
     },
-    Heap(SmallVec<[u16; 16]>)
+    Heap(SmallVec<[T; 16]>)// can only store 32 values max
 
 }
 
-impl Ports {
+impl<T: PartialEq + Ord> Chimera<T> {
     pub fn new() -> Self {
-        Ports::Inline { len: 0, buf: MaybeUninit::uninit() }
+        Chimera::Inline { len: 0, buf: MaybeUninit::uninit() }
     }
 
-    pub fn insert(&mut self, port: u16) {
+    pub fn from_vec(k: Vec<T>) -> Self {
+
+        let n = k.len();
+
+        if n <= 16 {
+            let len = u8::try_from(n).unwrap();
+            let mut chi: Chimera<T> = Chimera::Inline { len, buf: MaybeUninit::uninit() };
+
+            if let Chimera::Inline { len: _, buf } = &mut chi {
+               unsafe {
+                    let ptr = buf.as_mut_ptr() as *mut T;
+                    for (i, val) in k.into_iter().enumerate() {
+                        ptr.add(i).write(val); // move into inline array
+                    }
+                }
+            }
+
+        
+          //  k.into_iter().for_each(|k| chi.insert(k));
+            chi
+        } else {
+            let mut iter = k.into_iter(); // shared iterator
+            let mut sm: SmallVec<[T; 16]> = SmallVec::new();
+
+            unsafe {
+                let ptr = sm.as_mut_ptr();
+                for i in 0..16 {
+                    ptr.add(i).write(iter.next().unwrap());
+                }
+
+                for v in iter {
+                    sm.push(v);
+                }
+            }
+
+            Chimera::Heap(sm)
+        }
+    }
+
+
+
+    pub fn insert(&mut self, port: T) {
         match self {
-            Ports::Inline { len, buf } => {
-                let slice = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u16>(), *len as usize) };
+            Chimera::Inline { len, buf } => {
+                let slice = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<T>(), *len as usize) };
                 if slice.contains(&port) {
                     return;
                 }
 
                 if (*len as usize) < 16 {
                     unsafe {
-                        let ptr = buf.as_mut_ptr() as *mut u16;
+                        let ptr = buf.as_mut_ptr() as *mut T;
                         ptr.add(*len as usize).write(port);
                     }
 
@@ -37,40 +79,40 @@ impl Ports {
                         let old_len = *len as usize;
 
 
-                        let mut n_v = SmallVec::<[u16; 16]>::from_buf_and_len_unchecked(old_buf, old_len);
+                        let mut n_v = SmallVec::<[T; 16]>::from_buf_and_len_unchecked(old_buf, old_len);
 
                         n_v.push(port);
                         n_v.sort_unstable();
 
-                        *self = Ports::Heap(n_v);
+                        *self = Chimera::Heap(n_v);
                     }
                     
                 }
             },
-            Ports::Heap(small_vec) => {
+            Chimera::Heap(small_vec) => {
                 match small_vec.binary_search(&port) {
-                    Ok(_) => return,
+                    Ok(_) => (),
                     Err(i) =>  small_vec.insert(i, port)
                 }
             }
         }
     }
 
-    pub fn contains(&self, port: &u16) -> bool {
+    pub fn contains(&self, port: &T) -> bool {
         match self {
-            Ports::Inline { len, buf } => self.as_slice().iter().any(|k| k == port),
-            Ports::Heap(small_vec) => small_vec.binary_search(&port).is_ok(),
+            Chimera::Inline { len: _, buf: _ } => self.as_slice().iter().any(|k| k == port),
+            Chimera::Heap(small_vec) => small_vec.binary_search(port).is_ok(),
         }
     }
 
  
 
-    pub fn as_slice(&self) -> &[u16] {
+    pub fn as_slice(&self) -> &[T] {
         match self {
-            Ports::Inline { len, buf } => unsafe {
-                std::slice::from_raw_parts(buf.as_ptr().cast::<u16>(), *len as usize)
+            Chimera::Inline { len, buf } => unsafe {
+                std::slice::from_raw_parts(buf.as_ptr().cast::<T>(), *len as usize)
             },
-            Ports::Heap(v) => v.as_slice(),
+            Chimera::Heap(v) => v.as_slice(),
         }
     }
 
@@ -79,10 +121,9 @@ impl Ports {
 
 
 
-
-impl Drop for Ports {
+impl<T: PartialEq + Ord> Drop for Chimera<T> {
     fn drop(&mut self) {
-        if let Ports::Inline { len, buf } = self {
+        if let Chimera::Inline { len, buf } = self {
             unsafe {
                 let ptr = buf.as_mut_ptr() as *mut u16;
                 for i in 0..(*len as usize) {
@@ -101,11 +142,11 @@ mod tests {
 
     #[test]
     fn test_ports_push_and_as_slice() {
-        let mut ports = Ports::new();
+        let mut ports: Chimera<u16> = Chimera::new();
 
         match &ports {
-            Ports::Inline { len, .. } => assert_eq!(*len, 0),
-            Ports::Heap(_) => panic!("Expected Inline variant"),
+            Chimera::Inline { len, .. } => assert_eq!(*len, 0),
+            Chimera::Heap(_) => panic!("Expected Inline variant"),
         }
 
         for i in 1..=16 {
@@ -120,8 +161,8 @@ mod tests {
         }
 
         match &ports {
-            Ports::Inline { len, .. } => assert_eq!(*len, 16),
-            Ports::Heap(_) => panic!("Expected Inline variant"),
+            Chimera::Inline { len, .. } => assert_eq!(*len, 16),
+            Chimera::Heap(_) => panic!("Expected Inline variant"),
         }
 
         
@@ -136,8 +177,8 @@ mod tests {
         }
 
         match &ports {
-            Ports::Inline { .. } => panic!("Expected Heap variant"),
-            Ports::Heap(v) => {
+            Chimera::Inline { .. } => panic!("Expected Heap variant"),
+            Chimera::Heap(v) => {
                 assert_eq!(v.len(), 17);
                 assert_eq!(v.as_slice(), &[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]);
             }
@@ -172,7 +213,67 @@ mod tests {
 
     #[test]
     fn test_empty_ports() {
-        let ports = Ports::new();
+        let ports: Chimera<u16> = Chimera::new();
         assert!(ports.as_slice().is_empty());
+    }
+
+    #[test]
+    fn test_stack_drop_via_miri() {
+        let mut ports = Chimera::new();
+
+        ports.insert(3);
+        ports.insert(7);
+        ports.insert(88);
+        assert!(!ports.as_slice().is_empty());
+
+
+        
+
+        // leak some memory for fun/miri testing
+        //let s: String = String::from("I'm a leak");
+        //let _ptr: *mut String = Box::into_raw(Box::new(s));
+
+        //let ports_2: Chimera<String> = Chimera::new();
+        let port_3: Chimera<[u16; 4]> = Chimera::new();
+
+
+    }
+
+    #[test] 
+    fn test_from_vec() {
+
+        let mut ports: Chimera<u16> = Chimera::from_vec(vec![1,2,3,4]);
+
+        match &ports {
+            Chimera::Inline { len, .. } => assert_eq!(ports.as_slice(), &[1,2,3,4]),
+            Chimera::Heap(_) => panic!("Expected Inline variant"),
+        }
+
+        for i in 5..=17 {
+            ports.insert(i);
+        }
+
+
+        match &ports {
+            Chimera::Inline { .. } => panic!("Expected Heap variant"),
+            Chimera::Heap(v) => {
+                assert_eq!(v.len(), 17);
+                assert_eq!(v.as_slice(), &[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]);
+            }
+        }
+
+
+
+        let mut ports_2: Chimera<u16> = Chimera::from_vec(vec![1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]);
+
+        match &ports {
+            Chimera::Inline { .. } => panic!("Expected Heap variant"),
+            Chimera::Heap(v) => {
+                assert_eq!(v.len(), 17);
+                assert_eq!(v.as_slice(), &[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]);
+            }
+        }
+
+
     }
 }
