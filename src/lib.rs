@@ -1,4 +1,3 @@
-
 use std::mem::MaybeUninit;
 use smallvec::SmallVec;
 
@@ -12,10 +11,12 @@ enum Chimera<T: PartialEq + Ord> {
 }
 
 impl<T: PartialEq + Ord> Chimera<T> {
+    #[inline]
     pub fn new() -> Self {
         Chimera::Inline { len: 0, buf: MaybeUninit::uninit() }
     }
 
+    #[inline]
     pub fn from_vec(k: Vec<T>) -> Self {
 
         let n = k.len();
@@ -54,7 +55,7 @@ impl<T: PartialEq + Ord> Chimera<T> {
     }
 
 
-
+    #[inline]
     pub fn insert(&mut self, port: T) {
         match self {
             Chimera::Inline { len, buf } => {
@@ -95,6 +96,7 @@ impl<T: PartialEq + Ord> Chimera<T> {
         }
     }
 
+    #[inline]
     pub fn contains(&self, port: &T) -> bool {
         match self {
             Chimera::Inline { len: _, buf: _ } => self.as_slice().iter().any(|k| k == port),
@@ -103,7 +105,7 @@ impl<T: PartialEq + Ord> Chimera<T> {
     }
 
  
-
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         match self {
             Chimera::Inline { len, buf } => unsafe {
@@ -119,6 +121,7 @@ impl<T: PartialEq + Ord> Chimera<T> {
 
 
 impl<T: PartialEq + Ord> Drop for Chimera<T> {
+    #[inline]
     fn drop(&mut self) {
         if let Chimera::Inline { len, buf } = self {
             unsafe {
