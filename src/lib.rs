@@ -1,164 +1,164 @@
 use std::mem::MaybeUninit;
-    use smallvec::SmallVec;
+use smallvec::SmallVec;
 
 
-    #[derive(Debug)]
-    pub enum Chimera<T: PartialEq + Ord + Clone> {
-        Inline {
-            len: u8,
-            buf: MaybeUninit<[T; 16]>
-        },
-        Heap(SmallVec<[T; 16]>)// can only store 32 values max
+#[derive(Debug)]
+pub enum Chimera<T: PartialEq + Ord + Clone> {
+    Inline {
+        len: u8,
+        buf: MaybeUninit<[T; 16]>
+    },
+    Heap(SmallVec<[T; 16]>)// can only store 32 values max
+}
+
+impl<T: PartialEq + Ord + Clone> Default for Chimera<T> {
+    fn default() -> Self {
+        Chimera::new()
+    }
+}
+
+impl<T: PartialEq + Ord + Clone> Chimera<T> {
+    #[inline]
+    pub fn new() -> Self {
+        Chimera::Inline { len: 0, buf: MaybeUninit::uninit() }
     }
 
-    impl<T: PartialEq + Ord + Clone> Default for Chimera<T> {
-        fn default() -> Self {
-            Chimera::new()
-        }
-    }
+    #[inline]
+    pub fn from_vec(k: Vec<T>) -> Self {
 
-    impl<T: PartialEq + Ord + Clone> Chimera<T> {
-        #[inline]
-        pub fn new() -> Self {
-            Chimera::Inline { len: 0, buf: MaybeUninit::uninit() }
-        }
+        let n = k.len();
 
-        #[inline]
-        pub fn from_vec(k: Vec<T>) -> Self {
+        if n <= 16 {
+            let len = u8::try_from(n).unwrap();
+            let mut chi: Chimera<T> = Chimera::Inline { len, buf: MaybeUninit::uninit() };
 
-            let n = k.len();
-
-            if n <= 16 {
-                let len = u8::try_from(n).unwrap();
-                let mut chi: Chimera<T> = Chimera::Inline { len, buf: MaybeUninit::uninit() };
-
-                if let Chimera::Inline { len: _, buf } = &mut chi {
-                unsafe {
-                        let ptr = buf.as_mut_ptr() as *mut T;
-                        for (i, val) in k.into_iter().enumerate() {
-                            ptr.add(i).write(val); // move into inline array
-                        }
-                    }
-                }
-
-            
-            //  k.into_iter().for_each(|k| chi.insert(k));
-                chi
-            } else {
-                let mut iter = k.into_iter(); // shared iterator
-                let mut sm: SmallVec<[T; 16]> = SmallVec::new();
-
-                unsafe {
-                    let ptr = sm.as_mut_ptr();
-                    for i in 0..16 {
-                        ptr.add(i).write(iter.next().unwrap());
-                    }
-
-                    for v in iter { sm.push(v); }
-                }
-
-                Chimera::Heap(sm)
-            }
-        }
-
-
-        #[inline]
-        pub fn insert(&mut self, port: T) {
-            match self {
-                Chimera::Inline { len, buf } => {
-                    let slice = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<T>(), *len as usize) };
-                    if slice.contains(&port) {
-                        return;
-                    }
-
-                    if (*len as usize) < 16 {
-                        unsafe {
-                            let ptr = buf.as_mut_ptr() as *mut T;
-                            ptr.add(*len as usize).write(port);
-                        }
-
-                        *len += 1;
-                    } else {
-                        unsafe {
-                            let old_buf = std::mem::replace(buf, MaybeUninit::uninit());
-                            let old_len = *len as usize;
-
-
-                            let mut n_v = SmallVec::<[T; 16]>::from_buf_and_len_unchecked(old_buf, old_len);
-
-                            n_v.push(port);
-                            n_v.sort_unstable();
-
-                            *self = Chimera::Heap(n_v);
-                        }
-                        
-                    }
-                },
-                Chimera::Heap(small_vec) => {
-                    match small_vec.binary_search(&port) {
-                        Ok(_) => (),
-                        Err(i) =>  small_vec.insert(i, port)
+            if let Chimera::Inline { len: _, buf } = &mut chi {
+            unsafe {
+                    let ptr = buf.as_mut_ptr() as *mut T;
+                    for (i, val) in k.into_iter().enumerate() {
+                        ptr.add(i).write(val); // move into inline array
                     }
                 }
             }
-        }
 
-        #[inline]
-        pub fn contains(&self, port: &T) -> bool {
-            match self {
-                Chimera::Inline { len: _, buf: _ } => self.as_slice().iter().any(|k| k == port),
-                Chimera::Heap(small_vec) => small_vec.binary_search(port).is_ok(),
+        
+        //  k.into_iter().for_each(|k| chi.insert(k));
+            chi
+        } else {
+            let mut iter = k.into_iter(); // shared iterator
+            let mut sm: SmallVec<[T; 16]> = SmallVec::new();
+
+            unsafe {
+                let ptr = sm.as_mut_ptr();
+                for i in 0..16 {
+                    ptr.add(i).write(iter.next().unwrap());
+                }
+
+                for v in iter { sm.push(v); }
             }
-        }
 
-    
-        #[inline]
-        pub fn as_slice(&self) -> &[T] {
-            match self {
-                Chimera::Inline { len, buf } => unsafe {
-                    std::slice::from_raw_parts(buf.as_ptr().cast::<T>(), *len as usize)
-                },
-                Chimera::Heap(v) => v.as_slice(),
-            }
+            Chimera::Heap(sm)
         }
-
     }
 
-    impl<T: PartialEq + Ord + Clone> Clone for Chimera<T> {
-        fn clone(&self) -> Self {
-            match self {
-                Chimera::Inline { len, buf } => {
-                    let mut new_buf = MaybeUninit::<[T; 16]>::uninit();
+
+    #[inline]
+    pub fn insert(&mut self, port: T) {
+        match self {
+            Chimera::Inline { len, buf } => {
+                let slice = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<T>(), *len as usize) };
+                if slice.contains(&port) {
+                    return;
+                }
+
+                if (*len as usize) < 16 {
                     unsafe {
-                        for i in 0..*len as usize {
-                            // clone buffer
-                            new_buf.as_mut_ptr().cast::<T>().add(i).write(
-                                buf.as_ptr().cast::<T>().add(i).read().clone()
-                            );
-                        }
+                        let ptr = buf.as_mut_ptr() as *mut T;
+                        ptr.add(*len as usize).write(port);
                     }
-                    Chimera::Inline { len: *len, buf: new_buf }
+
+                    *len += 1;
+                } else {
+                    unsafe {
+                        let old_buf = std::mem::replace(buf, MaybeUninit::uninit());
+                        let old_len = *len as usize;
+
+
+                        let mut n_v = SmallVec::<[T; 16]>::from_buf_and_len_unchecked(old_buf, old_len);
+
+                        n_v.push(port);
+                        n_v.sort_unstable();
+
+                        *self = Chimera::Heap(n_v);
+                    }
+                    
                 }
-                Chimera::Heap(sv) => Chimera::Heap(sv.clone()), // clone small vec
+            },
+            Chimera::Heap(small_vec) => {
+                match small_vec.binary_search(&port) {
+                    Ok(_) => (),
+                    Err(i) =>  small_vec.insert(i, port)
+                }
             }
         }
     }
 
+    #[inline]
+    pub fn contains(&self, port: &T) -> bool {
+        match self {
+            Chimera::Inline { len: _, buf: _ } => self.as_slice().iter().any(|k| k == port),
+            Chimera::Heap(small_vec) => small_vec.binary_search(port).is_ok(),
+        }
+    }
 
 
-    impl<T: PartialEq + Ord + Clone> Drop for Chimera<T> {
-        #[inline]
-        fn drop(&mut self) {
-            if let Chimera::Inline { len, buf } = self {
+    #[inline]
+    pub fn as_slice(&self) -> &[T] {
+        match self {
+            Chimera::Inline { len, buf } => unsafe {
+                std::slice::from_raw_parts(buf.as_ptr().cast::<T>(), *len as usize)
+            },
+            Chimera::Heap(v) => v.as_slice(),
+        }
+    }
+
+}
+
+impl<T: PartialEq + Ord + Clone> Clone for Chimera<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Chimera::Inline { len, buf } => {
+                let mut new_buf = MaybeUninit::<[T; 16]>::uninit();
                 unsafe {
-                    let ptr = buf.as_mut_ptr() as *mut u16;
-                    for i in 0..(*len as usize) {
-                        ptr.add(i).drop_in_place();
+                    for i in 0..*len as usize {
+                        // clone buffer
+                        new_buf.as_mut_ptr().cast::<T>().add(i).write(
+                            buf.as_ptr().cast::<T>().add(i).read().clone()
+                        );
                     }
+                }
+                Chimera::Inline { len: *len, buf: new_buf }
+            }
+            Chimera::Heap(sv) => Chimera::Heap(sv.clone()), // clone small vec
+        }
+    }
+}
+
+
+
+impl<T: PartialEq + Ord + Clone> Drop for Chimera<T> {
+    #[inline]
+    fn drop(&mut self) {
+        if let Chimera::Inline { len, buf } = self {
+            unsafe {
+                let ptr = buf.as_mut_ptr() as *mut u16;
+                for i in 0..(*len as usize) {
+                    ptr.add(i).drop_in_place();
                 }
             }
         }
     }
+}
 
 #[cfg(test)]
 mod tests {
